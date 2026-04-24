@@ -1,14 +1,23 @@
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
+const cors = require('cors');
 
 const app = express();
+app.use(cors());
+app.use(express.json());
+
 const server = http.createServer(app);
-const io = socketIo(server);
+const io = socketIo(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"],
+    credentials: true
+  }
+});
 
 // Store active users and rooms
 const activeUsers = new Map(); // socketId -> user object
-const roomUsers = new Map(); // roomId -> Map of socketId -> user
 const usedNames = new Set(); // Track used names globally
 
 // Fixed room code - ONLY this room works
@@ -45,450 +54,226 @@ function removeName(name) {
     usedNames.delete(name);
 }
 
-// Serve HTML
-app.get('/', (req, res) => {
-    res.send(`
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Anonymous Chat - CodexZendrxGreat</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
-        .container {
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            width: 90%;
-            max-width: 1200px;
-            height: 85vh;
-            display: flex;
-            overflow: hidden;
-        }
-        .sidebar {
-            width: 260px;
-            background: #f8f9fa;
-            border-right: 1px solid #e0e0e0;
-            display: flex;
-            flex-direction: column;
-        }
-        .sidebar-header {
-            padding: 20px;
-            background: #667eea;
-            color: white;
-        }
-        .sidebar-header h3 {
-            font-size: 18px;
-        }
-        .sidebar-header p {
-            font-size: 11px;
-            opacity: 0.9;
-            margin-top: 5px;
-        }
-        .room-info {
-            padding: 20px;
-            border-bottom: 1px solid #e0e0e0;
-        }
-        .room-label {
-            font-size: 12px;
-            color: #666;
-            margin-bottom: 5px;
-        }
-        .room-code {
-            font-family: monospace;
-            font-size: 14px;
-            font-weight: bold;
-            background: #e0e0e0;
-            padding: 8px;
-            border-radius: 8px;
-            text-align: center;
-            word-break: break-all;
-        }
-        .users-list {
-            flex: 1;
-            padding: 20px;
-            overflow-y: auto;
-        }
-        .users-list h4 {
-            margin-bottom: 15px;
-            color: #666;
-            font-size: 14px;
-        }
-        .user-item {
-            padding: 8px;
-            margin-bottom: 8px;
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            background: white;
-            border: 1px solid #e0e0e0;
-        }
-        .user-info {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        .user-color {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-        }
-        .user-name {
-            font-size: 14px;
-        }
-        .admin-badge {
-            background: #ffd700;
-            color: #333;
-            font-size: 10px;
-            padding: 2px 6px;
-            border-radius: 10px;
-            font-weight: bold;
-        }
-        .kick-btn {
-            background: #ff4444;
-            color: white;
-            border: none;
-            padding: 4px 8px;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 11px;
-            transition: background 0.2s;
-        }
-        .kick-btn:hover {
-            background: #cc0000;
-        }
-        .kick-btn:disabled {
-            background: #ccc;
-            cursor: not-allowed;
-        }
-        .chat {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-        }
-        .messages {
-            flex: 1;
-            overflow-y: auto;
-            padding: 20px;
-        }
-        .message {
-            margin-bottom: 15px;
-            animation: fadeIn 0.3s;
-        }
-        .message-header {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 5px;
-            align-items: baseline;
-        }
-        .message-sender {
-            font-weight: bold;
-            font-size: 14px;
-        }
-        .message-time {
-            font-size: 10px;
-            color: #999;
-        }
-        .message-content {
-            color: #333;
-            word-wrap: break-word;
-            font-size: 14px;
-        }
-        .system-message {
-            text-align: center;
-            color: #999;
-            font-style: italic;
-            margin: 10px 0;
-            font-size: 12px;
-        }
-        .typing-indicator {
-            padding: 10px 20px;
-            color: #999;
-            font-style: italic;
-            font-size: 12px;
-        }
-        .input-area {
-            padding: 20px;
-            border-top: 1px solid #e0e0e0;
-            display: flex;
-            gap: 10px;
-        }
-        #messageInput {
-            flex: 1;
-            padding: 12px;
-            border: 1px solid #e0e0e0;
-            border-radius: 10px;
-            outline: none;
-            font-size: 14px;
-        }
-        #messageInput:focus {
-            border-color: #667eea;
-        }
-        #sendButton {
-            padding: 12px 24px;
-            background: #667eea;
-            color: white;
-            border: none;
-            border-radius: 10px;
-            cursor: pointer;
-            font-weight: bold;
-        }
-        #sendButton:hover {
-            background: #5a67d8;
-        }
-        .join-screen {
-            text-align: center;
-            padding: 40px;
-        }
-        .join-screen h1 {
-            margin-bottom: 10px;
-        }
-        .join-screen .room-info {
-            background: #f0f0f0;
-            border-radius: 10px;
-            margin: 20px 0;
-            padding: 15px;
-        }
-        .join-screen input {
-            padding: 12px;
-            margin: 10px;
-            border: 1px solid #e0e0e0;
-            border-radius: 10px;
-            width: 250px;
-            font-size: 14px;
-        }
-        .join-screen button {
-            padding: 12px 24px;
-            margin: 10px;
-            background: #667eea;
-            color: white;
-            border: none;
-            border-radius: 10px;
-            cursor: pointer;
-            font-size: 14px;
-            font-weight: bold;
-        }
-        .join-screen button:hover {
-            background: #5a67d8;
-        }
-        .admin-section {
-            margin-top: 20px;
-            padding-top: 20px;
-            border-top: 1px solid #e0e0e0;
-        }
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-    </style>
-</head>
-<body>
-    <div id="app"></div>
-    <script src="/socket.io/socket.io.js"></script>
-    <script>
-        const socket = io();
-        let currentUser = null;
-        let isAdmin = false;
-
-        function showJoinScreen() {
-            document.getElementById('app').innerHTML = \`
-                <div class="container">
-                    <div class="join-screen">
-                        <h1>✨ CodexZendrxGreat Chat</h1>
-                        <p>Anonymous & Secure</p>
-                        <div class="room-info">
-                            <strong>Room Code:</strong> CODEXZENDRXGREAT
-                        </div>
-                        <input type="text" id="adminCode" placeholder="Admin code (optional)">
-                        <br>
-                        <button onclick="joinChat()">Join Chat</button>
-                    </div>
-                </div>
-            \`;
-        }
-
-        function showChatRoom() {
-            document.getElementById('app').innerHTML = \`
-                <div class="container">
-                    <div class="sidebar">
-                        <div class="sidebar-header">
-                            <h3>✨ CodexZendrxGreat</h3>
-                            <p>Anonymous Chat Room</p>
-                        </div>
-                        <div class="room-info">
-                            <div class="room-label">Room Code</div>
-                            <div class="room-code">CODEXZENDRXGREAT</div>
-                        </div>
-                        <div class="users-list">
-                            <h4>Online Users (\${isAdmin ? 'Admin Mode' : ''})</h4>
-                            <div id="usersList"></div>
-                        </div>
-                    </div>
-                    <div class="chat">
-                        <div class="messages" id="messages"></div>
-                        <div class="typing-indicator" id="typingIndicator"></div>
-                        <div class="input-area">
-                            <input type="text" id="messageInput" placeholder="Type a message..." onkeypress="handleKeyPress(event)">
-                            <button id="sendButton" onclick="sendMessage()">Send</button>
-                        </div>
-                    </div>
-                </div>
-            \`;
-            
-            let typingTimeout;
-            const messageInput = document.getElementById('messageInput');
-            
-            if (messageInput) {
-                messageInput.addEventListener('input', () => {
-                    socket.emit('typing', true);
-                    clearTimeout(typingTimeout);
-                    typingTimeout = setTimeout(() => {
-                        socket.emit('typing', false);
-                    }, 1000);
-                });
-            }
-        }
-
-        window.joinChat = () => {
-            const adminCode = document.getElementById('adminCode').value;
-            socket.emit('join-room', { roomCode: 'CODEXZENDRXGREAT', adminCode: adminCode });
-        };
-
-        window.sendMessage = () => {
-            const input = document.getElementById('messageInput');
-            if (input) {
-                const content = input.value.trim();
-                if (content) {
-                    socket.emit('send-message', { content });
-                    input.value = '';
-                }
-            }
-        };
-
-        window.handleKeyPress = (event) => {
-            if (event.key === 'Enter') {
-                sendMessage();
-            }
-        };
-
-        window.kickUser = (userId) => {
-            socket.emit('kick-user', userId);
-        };
-
-        function addMessage(message, isSystem = false) {
-            const messagesDiv = document.getElementById('messages');
-            if (!messagesDiv) return;
-            
-            const messageDiv = document.createElement('div');
-            
-            if (isSystem) {
-                messageDiv.className = 'system-message';
-                messageDiv.textContent = message;
-            } else {
-                messageDiv.className = 'message';
-                messageDiv.innerHTML = \`
-                    <div class="message-header">
-                        <span class="message-sender" style="color: \${message.color}">\${escapeHtml(message.sender)}</span>
-                        <span class="message-time">\${new Date(message.timestamp).toLocaleTimeString()}</span>
-                    </div>
-                    <div class="message-content">\${escapeHtml(message.content)}</div>
-                \`;
-            }
-            
-            messagesDiv.appendChild(messageDiv);
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-        }
-
-        function updateUsersList(users) {
-            const usersDiv = document.getElementById('usersList');
-            if (!usersDiv) return;
-            
-            usersDiv.innerHTML = '';
-            users.forEach(user => {
-                const userDiv = document.createElement('div');
-                userDiv.className = 'user-item';
-                userDiv.innerHTML = \`
-                    <div class="user-info">
-                        <div class="user-color" style="background: \${user.color}"></div>
-                        <span class="user-name">\${escapeHtml(user.name)}</span>
-                        \${user.isAdmin ? '<span class="admin-badge">ADMIN</span>' : ''}
-                    </div>
-                    \${isAdmin && !user.isAdmin ? '<button class="kick-btn" onclick="kickUser(\\'' + user.id + '\\')">Kick</button>' : ''}
-                \`;
-                usersDiv.appendChild(userDiv);
+// Get all users in room
+function getRoomUsers() {
+    const users = [];
+    for (const [socketId, user] of activeUsers.entries()) {
+        if (user.room === FIXED_ROOM_CODE) {
+            users.push({
+                id: socketId,
+                name: user.name,
+                color: user.color,
+                isAdmin: user.isAdmin || false
             });
         }
+    }
+    return users;
+}
 
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
+// Broadcast updated user list to everyone
+function broadcastUserList() {
+    const users = getRoomUsers();
+    io.to(FIXED_ROOM_CODE).emit('user-list-update', users);
+}
+
+io.on('connection', (socket) => {
+    console.log('New connection:', socket.id);
+
+    // Join room
+    socket.on('join-room', (data) => {
+        const { roomCode, adminCode } = data;
+        
+        // Check if room code is correct
+        if (roomCode !== FIXED_ROOM_CODE) {
+            socket.emit('error', 'Invalid room code. Only CODEXZENDRXGREAT is allowed.');
+            return;
         }
-
-        // Socket event handlers
-        socket.on('join-success', (data) => {
-            currentUser = data.user;
-            isAdmin = data.isAdmin;
-            showChatRoom();
-            updateUsersList(data.users);
-            addMessage(\`You joined as \${data.user.name}\`, true);
-            if (data.isAdmin) {
-                addMessage('🔧 You are the ADMIN. Click the Kick button next to any user to remove them.', true);
+        
+        // Check if trying to join as admin
+        const isAdmin = (adminCode === ADMIN_CODE);
+        
+        // If admin already exists and trying to join as admin
+        if (isAdmin && adminSocketId) {
+            socket.emit('error', 'Admin already exists in the room');
+            return;
+        }
+        
+        // Generate unique name
+        const anonymousName = generateUniqueName();
+        const color = colors[Math.floor(Math.random() * colors.length)];
+        
+        // Join socket room
+        socket.join(FIXED_ROOM_CODE);
+        
+        // Store user
+        const user = {
+            id: socket.id,
+            name: anonymousName,
+            color: color,
+            room: FIXED_ROOM_CODE,
+            isAdmin: isAdmin
+        };
+        
+        activeUsers.set(socket.id, user);
+        
+        if (isAdmin) {
+            adminSocketId = socket.id;
+            console.log(`Admin joined: ${anonymousName}`);
+        }
+        
+        // Send success to new user
+        socket.emit('join-success', {
+            user: {
+                id: socket.id,
+                name: anonymousName,
+                color: color,
+                isAdmin: isAdmin
+            },
+            isAdmin: isAdmin,
+            users: getRoomUsers()
+        });
+        
+        // Send chat history (you can implement message storage)
+        socket.emit('chat-history', []);
+        
+        // Notify everyone else
+        socket.to(FIXED_ROOM_CODE).emit('user-joined', {
+            user: {
+                id: socket.id,
+                name: anonymousName,
+                color: color,
+                isAdmin: isAdmin
+            },
+            users: getRoomUsers()
+        });
+        
+        // Broadcast updated user list
+        broadcastUserList();
+        
+        console.log(`${anonymousName}${isAdmin ? ' (ADMIN)' : ''} joined room: ${FIXED_ROOM_CODE}`);
+    });
+    
+    // Send message
+    socket.on('send-message', (data) => {
+        const user = activeUsers.get(socket.id);
+        if (!user) return;
+        
+        const message = {
+            id: Date.now(),
+            sender: user.name,
+            color: user.color,
+            content: data.content,
+            timestamp: new Date().toISOString(),
+            isAdmin: user.isAdmin || false
+        };
+        
+        io.to(FIXED_ROOM_CODE).emit('new-message', message);
+    });
+    
+    // Kick user (admin only)
+    socket.on('kick-user', (targetUserId) => {
+        const admin = activeUsers.get(socket.id);
+        
+        // Check if requester is admin
+        if (!admin || !admin.isAdmin) {
+            socket.emit('error', 'Only admin can kick users');
+            return;
+        }
+        
+        // Get target user
+        const targetUser = activeUsers.get(targetUserId);
+        if (!targetUser) {
+            socket.emit('error', 'User not found');
+            return;
+        }
+        
+        // Cannot kick admin
+        if (targetUser.isAdmin) {
+            socket.emit('error', 'Cannot kick admin');
+            return;
+        }
+        
+        // Notify everyone
+        io.to(FIXED_ROOM_CODE).emit('user-kicked', {
+            userId: targetUserId,
+            userName: targetUser.name,
+            users: getRoomUsers()
+        });
+        
+        // Kick the user
+        const targetSocket = io.sockets.sockets.get(targetUserId);
+        if (targetSocket) {
+            targetSocket.emit('kicked', { message: 'You were kicked by admin' });
+            targetSocket.leave(FIXED_ROOM_CODE);
+        }
+        
+        // Remove from active users
+        removeName(targetUser.name);
+        activeUsers.delete(targetUserId);
+        
+        // Broadcast updated list
+        broadcastUserList();
+        
+        console.log(`Admin ${admin.name} kicked ${targetUser.name}`);
+    });
+    
+    // Typing indicator
+    socket.on('typing', (isTyping) => {
+        const user = activeUsers.get(socket.id);
+        if (user) {
+            socket.to(FIXED_ROOM_CODE).emit('user-typing', {
+                name: user.name,
+                isTyping: isTyping
+            });
+        }
+    });
+    
+    // Disconnect
+    socket.on('disconnect', () => {
+        const user = activeUsers.get(socket.id);
+        if (user) {
+            // If admin leaves, remove admin status
+            if (user.isAdmin) {
+                adminSocketId = null;
+                console.log(`Admin left: ${user.name}`);
             }
-        });
+            
+            // Notify everyone
+            io.to(FIXED_ROOM_CODE).emit('user-left', {
+                user: {
+                    id: socket.id,
+                    name: user.name
+                },
+                users: getRoomUsers()
+            });
+            
+            // Remove from active users
+            removeName(user.name);
+            activeUsers.delete(socket.id);
+            
+            // Broadcast updated list
+            broadcastUserList();
+            
+            console.log(`Disconnected: ${user.name}`);
+        }
+    });
+});
 
-        socket.on('chat-history', (messages) => {
-            messages.forEach(msg => addMessage(msg));
-        });
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.json({ 
+        status: 'ok', 
+        room: FIXED_ROOM_CODE,
+        users: activeUsers.size,
+        admin: adminSocketId ? true : false
+    });
+});
 
-        socket.on('new-message', (message) => {
-            addMessage(message);
-        });
-
-        socket.on('user-joined', (data) => {
-            addMessage(\`✨ \${data.user.name} joined the chat\`, true);
-            if (typeof updateUsersList === 'function') {
-                updateUsersList(data.users);
-            }
-        });
-
-        socket.on('user-left', (data) => {
-            addMessage(\`👋 \${data.user.name} left the chat\`, true);
-            if (typeof updateUsersList === 'function') {
-                updateUsersList(data.users);
-            }
-        });
-
-        socket.on('user-kicked', (data) => {
-            addMessage(\`⚠️ \${data.userName} was kicked by admin\`, true);
-            if (typeof updateUsersList === 'function') {
-                updateUsersList(data.users);
-            }
-        });
-
-        socket.on('user-typing', (data) => {
-            const indicator = document.getElementById('typingIndicator');
-            if (indicator) {
-                if (data.isTyping) {
-                    indicator.textContent = \`\${data.name} is typing...\`;
-                } else {
-                    indicator.textContent = '';
-                }
-            }
-        });
-
-        socket.on
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log(`\n✅ Anonymous Chat Server Running`);
+    console.log(`📍 Server: http://localhost:${PORT}`);
+    console.log(`🔒 Room Code: ${FIXED_ROOM_CODE}`);
+    console.log(`👑 Admin Code: ${ADMIN_CODE}`);
+    console.log(`📊 Health Check: http://localhost:${PORT}/health\n`);
+});
