@@ -1,29 +1,51 @@
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
-const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
 
-// In-memory stores
-const activeUsers = new Map();
-const rooms = new Map();
+// Store active users and rooms
+const activeUsers = new Map(); // socketId -> user object
+const roomUsers = new Map(); // roomId -> Map of socketId -> user
+const usedNames = new Set(); // Track used names globally
+
+// Fixed room code - ONLY this room works
+const FIXED_ROOM_CODE = "CODEXZENDRXGREAT";
+const ADMIN_CODE = "zendrxmani";
+let adminSocketId = null;
 
 const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7B731'];
 
-function generateAnonymousName() {
-    const adjectives = ['Quiet', 'Loud', 'Happy', 'Sleepy', 'Clever', 'Bold', 'Calm', 'Wise', 'Swift', 'Brave'];
-    const nouns = ['Panda', 'Tiger', 'Eagle', 'Wolf', 'Fox', 'Owl', 'Hawk', 'Deer', 'Bear', 'Lion'];
-    return adjectives[Math.floor(Math.random() * adjectives.length)] + nouns[Math.floor(Math.random() * nouns.length)];
+// Generate unique anonymous name
+function generateUniqueName() {
+    const adjectives = ['Quiet', 'Loud', 'Happy', 'Sleepy', 'Clever', 'Bold', 'Calm', 'Wise', 'Swift', 'Brave', 
+                        'Silly', 'Smart', 'Wild', 'Tiny', 'Giant', 'Magic', 'Cosmic', 'Electric', 'Mystic', 'Rapid'];
+    const nouns = ['Panda', 'Tiger', 'Eagle', 'Wolf', 'Fox', 'Owl', 'Hawk', 'Deer', 'Bear', 'Lion', 
+                   'Koala', 'Sloth', 'Falcon', 'Raven', 'Cobra', 'Lynx', 'Viper', 'Horse', 'Dragon', 'Phoenix'];
+    
+    let attempts = 0;
+    let name = "";
+    do {
+        name = adjectives[Math.floor(Math.random() * adjectives.length)] + nouns[Math.floor(Math.random() * nouns.length)];
+        attempts++;
+        if (attempts > 100) {
+            name = "User" + Math.floor(Math.random() * 9999);
+            break;
+        }
+    } while (usedNames.has(name));
+    
+    usedNames.add(name);
+    return name;
 }
 
-function generateRoomCode() {
-    return Math.random().toString(36).substring(2, 8).toUpperCase();
+// Remove name when user leaves
+function removeName(name) {
+    usedNames.delete(name);
 }
 
-// Serve HTML directly from memory
+// Serve HTML
 app.get('/', (req, res) => {
     res.send(`
 <!DOCTYPE html>
@@ -31,7 +53,7 @@ app.get('/', (req, res) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Anonymous Chat</title>
+    <title>Anonymous Chat - CodexZendrxGreat</title>
     <style>
         * {
             margin: 0;
@@ -57,7 +79,7 @@ app.get('/', (req, res) => {
             overflow: hidden;
         }
         .sidebar {
-            width: 250px;
+            width: 260px;
             background: #f8f9fa;
             border-right: 1px solid #e0e0e0;
             display: flex;
@@ -68,31 +90,54 @@ app.get('/', (req, res) => {
             background: #667eea;
             color: white;
         }
+        .sidebar-header h3 {
+            font-size: 18px;
+        }
+        .sidebar-header p {
+            font-size: 11px;
+            opacity: 0.9;
+            margin-top: 5px;
+        }
         .room-info {
             padding: 20px;
             border-bottom: 1px solid #e0e0e0;
         }
+        .room-label {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 5px;
+        }
         .room-code {
             font-family: monospace;
-            font-size: 20px;
+            font-size: 14px;
             font-weight: bold;
-            background: white;
+            background: #e0e0e0;
             padding: 8px;
             border-radius: 8px;
             text-align: center;
-            margin-top: 10px;
-            cursor: pointer;
-            color: #667eea;
+            word-break: break-all;
         }
         .users-list {
             flex: 1;
             padding: 20px;
             overflow-y: auto;
         }
+        .users-list h4 {
+            margin-bottom: 15px;
+            color: #666;
+            font-size: 14px;
+        }
         .user-item {
             padding: 8px;
-            margin-bottom: 5px;
+            margin-bottom: 8px;
             border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: white;
+            border: 1px solid #e0e0e0;
+        }
+        .user-info {
             display: flex;
             align-items: center;
             gap: 10px;
@@ -101,6 +146,34 @@ app.get('/', (req, res) => {
             width: 10px;
             height: 10px;
             border-radius: 50%;
+        }
+        .user-name {
+            font-size: 14px;
+        }
+        .admin-badge {
+            background: #ffd700;
+            color: #333;
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 10px;
+            font-weight: bold;
+        }
+        .kick-btn {
+            background: #ff4444;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 11px;
+            transition: background 0.2s;
+        }
+        .kick-btn:hover {
+            background: #cc0000;
+        }
+        .kick-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
         }
         .chat {
             flex: 1;
@@ -120,23 +193,27 @@ app.get('/', (req, res) => {
             display: flex;
             gap: 10px;
             margin-bottom: 5px;
+            align-items: baseline;
         }
         .message-sender {
             font-weight: bold;
+            font-size: 14px;
         }
         .message-time {
-            font-size: 11px;
+            font-size: 10px;
             color: #999;
         }
         .message-content {
             color: #333;
             word-wrap: break-word;
+            font-size: 14px;
         }
         .system-message {
             text-align: center;
             color: #999;
             font-style: italic;
             margin: 10px 0;
+            font-size: 12px;
         }
         .typing-indicator {
             padding: 10px 20px;
@@ -152,19 +229,23 @@ app.get('/', (req, res) => {
         }
         #messageInput {
             flex: 1;
-            padding: 10px;
+            padding: 12px;
             border: 1px solid #e0e0e0;
             border-radius: 10px;
             outline: none;
             font-size: 14px;
         }
+        #messageInput:focus {
+            border-color: #667eea;
+        }
         #sendButton {
-            padding: 10px 20px;
+            padding: 12px 24px;
             background: #667eea;
             color: white;
             border: none;
             border-radius: 10px;
             cursor: pointer;
+            font-weight: bold;
         }
         #sendButton:hover {
             background: #5a67d8;
@@ -173,21 +254,41 @@ app.get('/', (req, res) => {
             text-align: center;
             padding: 40px;
         }
+        .join-screen h1 {
+            margin-bottom: 10px;
+        }
+        .join-screen .room-info {
+            background: #f0f0f0;
+            border-radius: 10px;
+            margin: 20px 0;
+            padding: 15px;
+        }
         .join-screen input {
-            padding: 10px;
+            padding: 12px;
             margin: 10px;
             border: 1px solid #e0e0e0;
             border-radius: 10px;
-            width: 200px;
+            width: 250px;
+            font-size: 14px;
         }
         .join-screen button {
-            padding: 10px 20px;
+            padding: 12px 24px;
             margin: 10px;
             background: #667eea;
             color: white;
             border: none;
             border-radius: 10px;
             cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        .join-screen button:hover {
+            background: #5a67d8;
+        }
+        .admin-section {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #e0e0e0;
         }
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(10px); }
@@ -201,18 +302,20 @@ app.get('/', (req, res) => {
     <script>
         const socket = io();
         let currentUser = null;
-        let currentRoom = null;
+        let isAdmin = false;
 
         function showJoinScreen() {
             document.getElementById('app').innerHTML = \`
                 <div class="container">
                     <div class="join-screen">
-                        <h1>✨ Anonymous Chat</h1>
-                        <p>Join or create a chat room</p>
-                        <input type="text" id="roomCode" placeholder="Room Code (optional)">
+                        <h1>✨ CodexZendrxGreat Chat</h1>
+                        <p>Anonymous & Secure</p>
+                        <div class="room-info">
+                            <strong>Room Code:</strong> CODEXZENDRXGREAT
+                        </div>
+                        <input type="text" id="adminCode" placeholder="Admin code (optional)">
                         <br>
-                        <button onclick="createRoom()">Create New Room</button>
-                        <button onclick="joinRoom()">Join Room</button>
+                        <button onclick="joinChat()">Join Chat</button>
                     </div>
                 </div>
             \`;
@@ -223,14 +326,16 @@ app.get('/', (req, res) => {
                 <div class="container">
                     <div class="sidebar">
                         <div class="sidebar-header">
-                            <h3>Anonymous Chat</h3>
+                            <h3>✨ CodexZendrxGreat</h3>
+                            <p>Anonymous Chat Room</p>
                         </div>
                         <div class="room-info">
-                            <div>Room Code:</div>
-                            <div class="room-code" onclick="copyRoomCode()">\${currentRoom}</div>
+                            <div class="room-label">Room Code</div>
+                            <div class="room-code">CODEXZENDRXGREAT</div>
                         </div>
-                        <div class="users-list" id="usersList">
-                            <div>Loading users...</div>
+                        <div class="users-list">
+                            <h4>Online Users (\${isAdmin ? 'Admin Mode' : ''})</h4>
+                            <div id="usersList"></div>
                         </div>
                     </div>
                     <div class="chat">
@@ -258,17 +363,9 @@ app.get('/', (req, res) => {
             }
         }
 
-        window.createRoom = () => {
-            socket.emit('create-room');
-        };
-
-        window.joinRoom = () => {
-            const roomCode = document.getElementById('roomCode').value;
-            if (roomCode) {
-                socket.emit('join-room', roomCode);
-            } else {
-                alert('Please enter a room code');
-            }
+        window.joinChat = () => {
+            const adminCode = document.getElementById('adminCode').value;
+            socket.emit('join-room', { roomCode: 'CODEXZENDRXGREAT', adminCode: adminCode });
         };
 
         window.sendMessage = () => {
@@ -288,9 +385,8 @@ app.get('/', (req, res) => {
             }
         };
 
-        window.copyRoomCode = () => {
-            navigator.clipboard.writeText(currentRoom);
-            alert('Room code copied!');
+        window.kickUser = (userId) => {
+            socket.emit('kick-user', userId);
         };
 
         function addMessage(message, isSystem = false) {
@@ -321,13 +417,17 @@ app.get('/', (req, res) => {
             const usersDiv = document.getElementById('usersList');
             if (!usersDiv) return;
             
-            usersDiv.innerHTML = '<h4>Users Online</h4>';
+            usersDiv.innerHTML = '';
             users.forEach(user => {
                 const userDiv = document.createElement('div');
                 userDiv.className = 'user-item';
                 userDiv.innerHTML = \`
-                    <div class="user-color" style="background: \${user.color}"></div>
-                    <span>\${escapeHtml(user.name)}</span>
+                    <div class="user-info">
+                        <div class="user-color" style="background: \${user.color}"></div>
+                        <span class="user-name">\${escapeHtml(user.name)}</span>
+                        \${user.isAdmin ? '<span class="admin-badge">ADMIN</span>' : ''}
+                    </div>
+                    \${isAdmin && !user.isAdmin ? '<button class="kick-btn" onclick="kickUser(\\'' + user.id + '\\')">Kick</button>' : ''}
                 \`;
                 usersDiv.appendChild(userDiv);
             });
@@ -340,19 +440,15 @@ app.get('/', (req, res) => {
         }
 
         // Socket event handlers
-        socket.on('room-created', (data) => {
+        socket.on('join-success', (data) => {
             currentUser = data.user;
-            currentRoom = data.roomCode;
-            showChatRoom();
-            addMessage('You created this room! Share the code with friends.', true);
-        });
-
-        socket.on('joined-room', (data) => {
-            currentUser = data.user;
-            currentRoom = data.user.room;
+            isAdmin = data.isAdmin;
             showChatRoom();
             updateUsersList(data.users);
             addMessage(\`You joined as \${data.user.name}\`, true);
+            if (data.isAdmin) {
+                addMessage('🔧 You are the ADMIN. Click the Kick button next to any user to remove them.', true);
+            }
         });
 
         socket.on('chat-history', (messages) => {
@@ -364,13 +460,24 @@ app.get('/', (req, res) => {
         });
 
         socket.on('user-joined', (data) => {
-            addMessage(\`\${data.name} joined the chat\`, true);
-            updateUsersList(data.users);
+            addMessage(\`✨ \${data.user.name} joined the chat\`, true);
+            if (typeof updateUsersList === 'function') {
+                updateUsersList(data.users);
+            }
         });
 
         socket.on('user-left', (data) => {
-            addMessage(\`\${data.name} left the chat\`, true);
-            updateUsersList(data.users);
+            addMessage(\`👋 \${data.user.name} left the chat\`, true);
+            if (typeof updateUsersList === 'function') {
+                updateUsersList(data.users);
+            }
+        });
+
+        socket.on('user-kicked', (data) => {
+            addMessage(\`⚠️ \${data.userName} was kicked by admin\`, true);
+            if (typeof updateUsersList === 'function') {
+                updateUsersList(data.users);
+            }
         });
 
         socket.on('user-typing', (data) => {
@@ -384,147 +491,4 @@ app.get('/', (req, res) => {
             }
         });
 
-        socket.on('error', (error) => {
-            alert(error);
-        });
-
-        // Start
-        showJoinScreen();
-    </script>
-</body>
-</html>
-    `);
-});
-
-io.on('connection', (socket) => {
-    console.log('New connection:', socket.id);
-
-    socket.on('create-room', () => {
-        const roomCode = generateRoomCode();
-        const anonymousName = generateAnonymousName();
-        const color = colors[Math.floor(Math.random() * colors.length)];
-        
-        socket.join(roomCode);
-        
-        const user = {
-            id: socket.id,
-            name: anonymousName,
-            color: color,
-            room: roomCode
-        };
-        
-        activeUsers.set(socket.id, user);
-        
-        if (!rooms.has(roomCode)) {
-            rooms.set(roomCode, { users: [], messages: [] });
-        }
-        
-        rooms.get(roomCode).users.push(user);
-        
-        socket.emit('room-created', {
-            roomCode: roomCode,
-            user: user
-        });
-        
-        console.log(`Room created: ${roomCode} by ${anonymousName}`);
-    });
-
-    socket.on('join-room', (roomCode) => {
-        roomCode = roomCode.toUpperCase();
-        
-        if (!rooms.has(roomCode)) {
-            socket.emit('error', 'Room does not exist');
-            return;
-        }
-        
-        const anonymousName = generateAnonymousName();
-        const color = colors[Math.floor(Math.random() * colors.length)];
-        
-        socket.join(roomCode);
-        
-        const user = {
-            id: socket.id,
-            name: anonymousName,
-            color: color,
-            room: roomCode
-        };
-        
-        activeUsers.set(socket.id, user);
-        rooms.get(roomCode).users.push(user);
-        
-        socket.emit('chat-history', rooms.get(roomCode).messages);
-        
-        io.to(roomCode).emit('user-joined', {
-            name: anonymousName,
-            color: color,
-            users: rooms.get(roomCode).users.map(u => ({ name: u.name, color: u.color }))
-        });
-        
-        socket.emit('joined-room', { 
-            user: user, 
-            users: rooms.get(roomCode).users.map(u => ({ name: u.name, color: u.color }))
-        });
-        
-        console.log(`${anonymousName} joined room: ${roomCode}`);
-    });
-
-    socket.on('send-message', (data) => {
-        const user = activeUsers.get(socket.id);
-        if (!user) return;
-        
-        const message = {
-            id: Date.now(),
-            sender: user.name,
-            color: user.color,
-            content: data.content,
-            timestamp: new Date().toISOString(),
-            system: false
-        };
-        
-        const room = rooms.get(user.room);
-        if (room) {
-            room.messages.push(message);
-            if (room.messages.length > 100) room.messages.shift();
-            
-            io.to(user.room).emit('new-message', message);
-        }
-    });
-
-    socket.on('typing', (isTyping) => {
-        const user = activeUsers.get(socket.id);
-        if (user) {
-            socket.to(user.room).emit('user-typing', {
-                name: user.name,
-                isTyping: isTyping
-            });
-        }
-    });
-
-    socket.on('disconnect', () => {
-        const user = activeUsers.get(socket.id);
-        if (user) {
-            const room = rooms.get(user.room);
-            if (room) {
-                room.users = room.users.filter(u => u.id !== user.id);
-                
-                io.to(user.room).emit('user-left', {
-                    name: user.name,
-                    users: room.users.map(u => ({ name: u.name, color: u.color }))
-                });
-                
-                if (room.users.length === 0) {
-                    rooms.delete(user.room);
-                    console.log(`Room deleted: ${user.room} (empty)`);
-                }
-            }
-            activeUsers.delete(socket.id);
-            console.log(`Disconnected: ${user.name}`);
-        }
-    });
-});
-
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`\n✅ Anonymous chat server running!`);
-    console.log(`📍 Open http://localhost:${PORT} in your browser\n`);
-});
+        socket.on
