@@ -13,7 +13,7 @@ const io = socketIo(server, { cors: { origin: "*" } });
 // ----- Data -----
 const activeUsers = new Map();      // socketId -> user
 const usedNames = new Set();
-const chatHistory = [];             // stores message objects
+const chatHistory = [];
 const MAX_HISTORY = 200;
 
 const FIXED_ROOM = "CODEXZENDRXGREAT";
@@ -23,7 +23,18 @@ let currentAdminCount = 0;
 
 const COLORS = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7B731'];
 
-function generateUniqueName() {
+// Name validation: only letters, numbers, spaces, and minimum 2 chars, max 20
+function isValidName(name) {
+  if (!name || typeof name !== 'string') return false;
+  const trimmed = name.trim();
+  if (trimmed.length < 2 || trimmed.length > 20) return false;
+  // Allow letters (including unicode letters? but we'll restrict to basic for safety), numbers, spaces
+  // Disallow emoji, special chars
+  const allowedRegex = /^[a-zA-Z0-9 ]+$/;
+  return allowedRegex.test(trimmed);
+}
+
+function generateRandomName() {
   const adj = ['Quiet','Loud','Happy','Sleepy','Clever','Bold','Calm','Wise','Swift','Brave','Silly','Smart','Wild','Tiny','Giant','Magic','Cosmic','Electric','Mystic','Rapid'];
   const nouns = ['Panda','Tiger','Eagle','Wolf','Fox','Owl','Hawk','Deer','Bear','Lion','Koala','Sloth','Falcon','Raven','Cobra','Lynx','Viper','Horse','Dragon','Phoenix'];
   let name;
@@ -31,7 +42,6 @@ function generateUniqueName() {
   usedNames.add(name);
   return name;
 }
-function removeName(name) { usedNames.delete(name); }
 
 function getRoomUsers() {
   const users = [];
@@ -52,21 +62,17 @@ function addToHistory(msg) {
   if (chatHistory.length > MAX_HISTORY) chatHistory.shift();
 }
 
-// Clean up view-once image if all current users have viewed it
+// View-once cleanup
 function tryDeleteViewOnceImage(message) {
   if (!message.viewOnce) return;
   const currentUserIds = new Set(Array.from(activeUsers.keys()));
   const viewers = message.viewedBy || new Set();
-  // Check if every active user has viewed the image
   let allViewed = true;
   for (let uid of currentUserIds) {
-    if (!viewers.has(uid)) {
-      allViewed = false;
-      break;
-    }
+    if (!viewers.has(uid)) { allViewed = false; break; }
   }
   if (allViewed && message.imageData) {
-    message.imageData = null; // free memory
+    message.imageData = null;
     io.to(FIXED_ROOM).emit('image-expired', { messageId: message.id });
     console.log(`View-once image ${message.id} deleted (all ${currentUserIds.size} users saw it)`);
   }
@@ -76,10 +82,33 @@ io.on('connection', (socket) => {
   console.log('New client:', socket.id);
 
   socket.on('join-room', (data) => {
-    const { roomCode, adminCode, savedName, savedColor } = data;
+    const { roomCode, adminCode, chosenName, savedName, savedColor } = data;
     if (roomCode !== FIXED_ROOM) {
       socket.emit('error', 'Invalid room code');
       return;
+    }
+
+    // Determine name: priority chosenName from index, else savedName, else random
+    let rawName = null;
+    if (chosenName && isValidName(chosenName)) {
+      rawName = chosenName.trim();
+    } else if (savedName && isValidName(savedName)) {
+      rawName = savedName.trim();
+    }
+    
+    let finalName = rawName;
+    if (!finalName) {
+      finalName = generateRandomName();
+    } else {
+      // If name already taken, add a number suffix
+      let uniqueName = finalName;
+      let counter = 1;
+      while (usedNames.has(uniqueName)) {
+        uniqueName = `${finalName}${counter}`;
+        counter++;
+      }
+      finalName = uniqueName;
+      usedNames.add(finalName);
     }
 
     let isAdmin = false;
@@ -91,12 +120,11 @@ io.on('connection', (socket) => {
       return;
     }
 
-    let name = (savedName && !usedNames.has(savedName)) ? savedName : generateUniqueName();
     const color = (savedColor && COLORS.includes(savedColor)) ? savedColor : COLORS[Math.floor(Math.random() * COLORS.length)];
 
     const user = {
       id: socket.id,
-      name,
+      name: finalName,
       color,
       room: FIXED_ROOM,
       isAdmin,
@@ -106,20 +134,20 @@ io.on('connection', (socket) => {
     socket.join(FIXED_ROOM);
 
     socket.emit('join-success', {
-      user: { id: socket.id, name, color, isAdmin, isMuted: false },
+      user: { id: socket.id, name: finalName, color, isAdmin, isMuted: false },
       users: getRoomUsers(),
       history: chatHistory
     });
 
     socket.to(FIXED_ROOM).emit('user-joined', {
-      user: { id: socket.id, name, color, isAdmin },
+      user: { id: socket.id, name: finalName, color, isAdmin },
       users: getRoomUsers()
     });
     broadcastUserList();
-    console.log(`${name} joined (admin:${isAdmin})`);
+    console.log(`${finalName} joined (admin:${isAdmin})`);
   });
 
-  // Send message (text or image)
+  // Send message
   socket.on('send-message', (data) => {
     const user = activeUsers.get(socket.id);
     if (!user) return;
@@ -139,12 +167,9 @@ io.on('connection', (socket) => {
 
     if (data.type === 'image') {
       message.type = 'image';
-      message.imageData = data.imageData;   // base64 string
+      message.imageData = data.imageData;
       message.viewOnce = data.viewOnce || false;
-      message.viewedBy = new Set();          // store user IDs who have seen it
-      if (!message.viewOnce) {
-        // non-view-once images stay forever
-      }
+      message.viewedBy = new Set();
     } else {
       message.type = 'text';
       message.content = data.content;
@@ -152,9 +177,22 @@ io.on('connection', (socket) => {
 
     addToHistory(message);
     io.to(FIXED_ROOM).emit('new-message', message);
+
+    // Send mention notifications to mentioned users
+    if (message.mentions && message.mentions.length) {
+      const mentionedNames = message.mentions;
+      for (const [sid, u] of activeUsers.entries()) {
+        if (mentionedNames.includes(u.name)) {
+          io.to(sid).emit('mention-notification', {
+            from: user.name,
+            messagePreview: data.content ? data.content.substring(0, 50) : '📷 image'
+          });
+        }
+      }
+    }
   });
 
-  // Mark image as viewed (for view-once)
+  // View image
   socket.on('view-image', (messageId) => {
     const user = activeUsers.get(socket.id);
     if (!user) return;
@@ -164,13 +202,12 @@ io.on('connection', (socket) => {
       if (!msg.viewedBy.has(user.id)) {
         msg.viewedBy.add(user.id);
         io.to(FIXED_ROOM).emit('image-viewed', { messageId, viewerId: user.id, viewerName: user.name });
-        // Try to delete if all have seen
         tryDeleteViewOnceImage(msg);
       }
     }
   });
 
-  // Admin: Mute user
+  // Admin mute
   socket.on('mute-user', (targetUserId) => {
     const admin = activeUsers.get(socket.id);
     if (!admin || !admin.isAdmin) {
@@ -190,7 +227,7 @@ io.on('connection', (socket) => {
     if (targetSocket) targetSocket.emit('mute-status', { isMuted: target.isMuted });
   });
 
-  // Admin: Kick user
+  // Admin kick
   socket.on('kick-user', (targetUserId) => {
     const admin = activeUsers.get(socket.id);
     if (!admin || !admin.isAdmin) {
@@ -206,15 +243,15 @@ io.on('connection', (socket) => {
     io.to(FIXED_ROOM).emit('user-kicked', { userId: targetUserId, userName: target.name });
     const targetSocket = io.sockets.sockets.get(targetUserId);
     if (targetSocket) {
-      targetSocket.emit('kicked', { message: 'You were kicked' });
+      targetSocket.emit('kicked', { message: 'You were kicked by an admin' });
       targetSocket.leave(FIXED_ROOM);
     }
-    removeName(target.name);
+    usedNames.delete(target.name);
     activeUsers.delete(targetUserId);
     broadcastUserList();
   });
 
-  // Typing indicator
+  // Typing
   socket.on('typing', (isTyping) => {
     const user = activeUsers.get(socket.id);
     if (user) {
@@ -228,18 +265,14 @@ io.on('connection', (socket) => {
     if (user) {
       if (user.isAdmin) currentAdminCount--;
       io.to(FIXED_ROOM).emit('user-left', { userId: socket.id, userName: user.name });
-      removeName(user.name);
+      usedNames.delete(user.name);
       activeUsers.delete(socket.id);
       broadcastUserList();
-
-      // Re-check all view-once images: if a user left, they cannot view, so maybe we don't delete?
-      // We'll leave as is; image will only be deleted when all *current* users have viewed.
-      // That's fine.
     }
   });
 });
 
-app.get('/health', (req, res) => res.json({ status: 'ok', admins: currentAdminCount, users: activeUsers.size }));
+app.get('/health', (req, res) => res.json({ status: 'ok', users: activeUsers.size, admins: currentAdminCount }));
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Server on ${PORT}`));
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
