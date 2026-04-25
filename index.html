@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-  <title>CodexZendrxGreat · Rules</title>
+  <title>CodexZendrxGreat · Join</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -15,7 +15,7 @@
       justify-content: center;
       padding: 1rem;
     }
-    .rules-card {
+    .card {
       background: rgba(30, 34, 53, 0.95);
       backdrop-filter: blur(12px);
       border-radius: 2rem;
@@ -32,6 +32,19 @@
     .rule-list { text-align: left; margin: 1.5rem 0; padding-left: 1.2rem; }
     .rule-list li { margin: 0.7rem 0; font-size: 0.95rem; line-height: 1.4; }
     .highlight { color: #f5b042; font-weight: bold; }
+    input {
+      width: 100%;
+      padding: 0.8rem;
+      margin: 0.5rem 0;
+      background: #2a2f45;
+      border: none;
+      border-radius: 2rem;
+      color: white;
+      font-size: 1rem;
+      text-align: center;
+    }
+    input::placeholder { color: #aaa; }
+    .name-hint { font-size: 0.7rem; color: #888; margin: 0.3rem 0 1rem; }
     button {
       background: linear-gradient(135deg, #667eea, #764ba2);
       border: none;
@@ -42,31 +55,56 @@
       font-weight: bold;
       width: 100%;
       cursor: pointer;
-      margin-top: 1rem;
+      margin-top: 0.5rem;
       transition: transform 0.1s;
     }
     button:active { transform: scale(0.98); }
     footer { font-size: 0.7rem; margin-top: 1.5rem; color: #555; }
+    .error { color: #ff8888; font-size: 0.8rem; margin-top: 0.5rem; }
   </style>
 </head>
 <body>
-<div class="rules-card">
+<div class="card">
   <h1>✨ CodexZendrxGreat</h1>
   <div class="sub">Anonymous · Secure · Ephemeral</div>
   <ul class="rule-list">
     <li>📜 <span class="highlight">No hate speech, harassment, or bullying.</span></li>
-    <li>🔒 <span class="highlight">share 🤧 personal information.</span></li>
+    <li>🔒 <span class="highlight">No sharing personal information.</span></li>
     <li>📸 <span class="highlight">View‑once images</span> disappear after all have seen them. Do not screenshot.</li>
     <li>👑 <span class="highlight">Only 4 admins</span> (code: <code style="background:#00000055; padding:0.2rem 0.4rem; border-radius:0.5rem;"></code>) – they can mute/kick.</li>
     <li>🚫 Violations lead to <span class="highlight">mute or kick</span>.</li>
     <li>📱 This chat is <span class="highlight">mobile‑friendly</span> – works on Android / iPhone.</li>
-    <li>🎴 no insults on me pls i dey beg una abeg biko </li>
   </ul>
-  <button id="acceptBtn">I ACCEPT & CONTINUE →</button>
-  <footer>by joining, you agree to follow the rules</footer>
+  <input type="text" id="nameInput" placeholder="Choose a nickname (optional)" maxlength="20">
+  <div class="name-hint">Letters, numbers and spaces only. No emoji / special chars. Leave empty for random name.</div>
+  <div id="nameError" class="error"></div>
+  <button id="joinBtn">I ACCEPT & JOIN CHAT →</button>
+  <footer>by joining, you agree to the rules</footer>
 </div>
 <script>
-  document.getElementById('acceptBtn').onclick = () => {
+  document.getElementById('joinBtn').onclick = () => {
+    let chosenName = document.getElementById('nameInput').value.trim();
+    const errorDiv = document.getElementById('nameError');
+    errorDiv.innerText = '';
+    if (chosenName) {
+      // Validate name: only alphanumeric and spaces, length 2-20
+      const allowed = /^[a-zA-Z0-9 ]+$/;
+      if (!allowed.test(chosenName)) {
+        errorDiv.innerText = '❌ Name can only contain letters, numbers, and spaces. No emoji or special characters.';
+        return;
+      }
+      if (chosenName.length < 2 || chosenName.length > 20) {
+        errorDiv.innerText = '❌ Name must be between 2 and 20 characters.';
+        return;
+      }
+    } else {
+      chosenName = ''; // will trigger random name in backend
+    }
+    // Save chosen name to localStorage and redirect to chat.html
+    localStorage.setItem('chat_chosen_name', chosenName);
+    // Also clear any old saved identity to force new name (people want change)
+    localStorage.removeItem('chat_name');
+    localStorage.removeItem('chat_color');
     window.location.href = 'chat.html';
   };
 </script>
