@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+  <title>CodexZendrxGreat · Rules</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background: linear-gradient(145deg, #0b0e1a 0%, #1a1f2e 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+    .rules-card {
+      background: rgba(30, 34, 53, 0.95);
+      backdrop-filter: blur(12px);
+      border-radius: 2rem;
+      max-width: 550px;
+      width: 100%;
+      padding: 2rem 1.5rem;
+      color: white;
+      text-align: center;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+      border: 1px solid rgba(255,255,255,0.2);
+    }
+    h1 { font-size: 1.8rem; margin-bottom: 0.5rem; background: linear-gradient(135deg, #a0c0ff, #c084fc); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .sub { color: #aaa; margin-bottom: 1.5rem; font-size: 0.9rem; }
+    .rule-list { text-align: left; margin: 1.5rem 0; padding-left: 1.2rem; }
+    .rule-list li { margin: 0.7rem 0; font-size: 0.95rem; line-height: 1.4; }
+    .highlight { color: #f5b042; font-weight: bold; }
+    button {
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      border: none;
+      padding: 0.9rem 1.5rem;
+      border-radius: 3rem;
+      color: white;
+      font-size: 1.1rem;
+      font-weight: bold;
+      width: 100%;
+      cursor: pointer;
+      margin-top: 1rem;
+      transition: transform 0.1s;
+    }
+    button:active { transform: scale(0.98); }
+    footer { font-size: 0.7rem; margin-top: 1.5rem; color: #555; }
+  </style>
+</head>
+<body>
+<div class="rules-card">
+  <h1>✨ CodexZendrxGreat</h1>
+  <div class="sub">Anonymous · Secure · Ephemeral</div>
+  <ul class="rule-list">
+    <li>📜 <span class="highlight">No hate speech, harassment, or bullying.</span></li>
+    <li>🔒 <span class="highlight">No sharing personal information.</span></li>
+    <li>📸 <span class="highlight">View‑once images</span> disappear after all have seen them. Do not screenshot.</li>
+    <li>👑 <span class="highlight">Only 4 admins</span> (code: <code style="background:#00000055; padding:0.2rem 0.4rem; border-radius:0.5rem;">zendrxmani</code>) – they can mute/kick.</li>
+    <li>🚫 Violations lead to <span class="highlight">mute or kick</span>.</li>
+    <li>📱 This chat is <span class="highlight">mobile‑friendly</span> – works on Android / iPhone.</li>
+  </ul>
+  <button id="acceptBtn">I ACCEPT & CONTINUE →</button>
+  <footer>by joining, you agree to follow the rules</footer>
+</div>
+<script>
+  document.getElementById('acceptBtn').onclick = () => {
+    window.location.href = 'chat.html';
+  };
+</script>
+</body>
+</html>
